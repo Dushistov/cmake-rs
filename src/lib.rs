@@ -1094,7 +1094,7 @@ fn unique_per_compiler_dirname(
     hash.to_le_bytes()
         .iter()
         .fold(String::with_capacity(16), |mut acc, byte| {
-            write!(&mut acc, "{:x}{:x}", (byte >> 4) & 0xF, byte & 0xF)
+            write!(&mut acc, "{:x}{:x}", (byte >> 4) & 0xFu8, byte & 0xFu8)
                 .expect("write to String failed");
             acc
         })
