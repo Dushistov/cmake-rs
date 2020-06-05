@@ -24,7 +24,7 @@ fn handling_reset_cache_after_set_var() {
             .build_target("all")
             .build()
             .join("build");
-
+        println!("first dst: {:?}", dst);
         assert!(fs::read_to_string(dst.join("CMakeCache.txt"))
             .unwrap()
             .contains("OPT1:BOOL=False"));
@@ -35,7 +35,7 @@ fn handling_reset_cache_after_set_var() {
             .build_target("all")
             .build()
             .join("build");
-
+        println!("second dst: {:?}", dst);
         assert!(fs::read_to_string(dst.join("CMakeCache.txt"))
             .unwrap()
             .contains("OPT1:BOOL=False"));

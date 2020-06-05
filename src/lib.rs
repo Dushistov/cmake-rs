@@ -45,10 +45,13 @@
 #![deny(missing_docs)]
 
 extern crate cc;
+extern crate rustc_hash;
 
 use std::env;
 use std::ffi::{OsStr, OsString};
+use std::fmt::Write;
 use std::fs::{self, File};
+use std::hash::{Hash, Hasher};
 use std::io::prelude::*;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -366,6 +369,12 @@ impl Config {
             .out_dir
             .clone()
             .unwrap_or_else(|| PathBuf::from(getenv_unwrap("OUT_DIR")));
+        let dst = dst.join(unique_per_compiler_dirname(
+            &c_compiler,
+            &cxx_compiler,
+            &asm_compiler,
+        ));
+        let _ = fs::create_dir(&dst);
         let build = dst.join("build");
         self.maybe_clear(&build);
         let _ = fs::create_dir(&build);
@@ -1064,6 +1073,31 @@ fn test_filter_compiler_args_ios() {
         input_flags,
         OsString::from(" -fPIC -m64 -m64 -fembed-bitcode")
     );
+}
+
+// Acording to
+// https://gitlab.kitware.com/cmake/cmake/-/issues/18959
+// if compiler changed, then cmake resets all cached variables
+// and we lost all user's configuration.
+// That's why we use unique name per toolchain
+fn unique_per_compiler_dirname(
+    c_compiler: &cc::Tool,
+    cxx_compiler: &cc::Tool,
+    asm_compiler: &cc::Tool,
+) -> String {
+    let mut hasher = rustc_hash::FxHasher::default();
+    c_compiler.path().hash(&mut hasher);
+    cxx_compiler.path().hash(&mut hasher);
+    asm_compiler.path().hash(&mut hasher);
+    let hash = hasher.finish();
+
+    hash.to_le_bytes()
+        .iter()
+        .fold(String::with_capacity(16), |mut acc, byte| {
+            write!(&mut acc, "{:x}{:x}", (byte >> 4) & 0xF, byte & 0xF)
+                .expect("write to String failed");
+            acc
+        })
 }
 
 fn run(cmd: &mut Command, program: &str) {
