@@ -99,6 +99,8 @@ pub fn build<P: AsRef<Path>>(path: P) -> PathBuf {
     Config::new(path.as_ref()).build()
 }
 
+static CMAKE_CACHE_FILE: &str = "CMakeCache.txt";
+
 impl Config {
     /// Creates a new blank set of configuration to build the project specified
     /// at the path `path`.
@@ -383,14 +385,14 @@ impl Config {
 
         // Build up the first cmake command to build the build system.
         let executable = env::var("CMAKE").unwrap_or("cmake".to_owned());
-        let mut cmd = Command::new(&executable);
+        let mut conf_cmd = Command::new(&executable);
 
         if self.verbose_cmake {
-            cmd.arg("-Wdev");
-            cmd.arg("--debug-output");
+            conf_cmd.arg("-Wdev");
+            conf_cmd.arg("--debug-output");
         }
 
-        cmd.arg(&self.path).current_dir(&build);
+        conf_cmd.arg(&self.path).current_dir(&build);
         let mut is_ninja = false;
         if let Some(ref generator) = self.generator {
             is_ninja = generator.to_string_lossy().contains("Ninja");
@@ -423,7 +425,7 @@ impl Config {
                         (false, false) => fail("no valid generator found for GNU toolchain; MSYS or MinGW must be installed")
                     };
 
-                    cmd.arg("-G").arg(generator);
+                    conf_cmd.arg("-G").arg(generator);
                 }
             } else {
                 // If we're cross compiling onto windows, then set some
@@ -431,7 +433,7 @@ impl Config {
                 // systems may need the `windres` or `dlltool` variables set, so
                 // set them if possible.
                 if !self.defined("CMAKE_SYSTEM_NAME") {
-                    cmd.arg("-DCMAKE_SYSTEM_NAME=Windows");
+                    conf_cmd.arg("-DCMAKE_SYSTEM_NAME=Windows");
                 }
                 if !self.defined("CMAKE_RC_COMPILER") {
                     let exe = find_exe(c_compiler.path());
@@ -441,7 +443,7 @@ impl Config {
                         if windres.is_file() {
                             let mut arg = OsString::from("-DCMAKE_RC_COMPILER=");
                             arg.push(&windres);
-                            cmd.arg(arg);
+                            conf_cmd.arg(arg);
                         }
                     }
                 }
@@ -452,21 +454,23 @@ impl Config {
             // This also guarantees that NMake generator isn't chosen implicitly.
             let using_nmake_generator;
             if self.generator.is_none() {
-                cmd.arg("-G").arg(self.visual_studio_generator(&target));
+                conf_cmd
+                    .arg("-G")
+                    .arg(self.visual_studio_generator(&target));
                 using_nmake_generator = false;
             } else {
                 using_nmake_generator = self.generator.as_ref().unwrap() == "NMake Makefiles";
             }
             if !is_ninja && !using_nmake_generator {
                 if target.contains("x86_64") {
-                    cmd.arg("-Thost=x64");
-                    cmd.arg("-Ax64");
+                    conf_cmd.arg("-Thost=x64");
+                    conf_cmd.arg("-Ax64");
                 } else if target.contains("thumbv7a") {
-                    cmd.arg("-Thost=x64");
-                    cmd.arg("-Aarm");
+                    conf_cmd.arg("-Thost=x64");
+                    conf_cmd.arg("-Aarm");
                 } else if target.contains("aarch64") {
-                    cmd.arg("-Thost=x64");
-                    cmd.arg("-AARM64");
+                    conf_cmd.arg("-Thost=x64");
+                    conf_cmd.arg("-AARM64");
                 } else if target.contains("i686") {
                     use cc::windows_registry::{find_vs_version, VsVers};
                     match find_vs_version() {
@@ -474,8 +478,8 @@ impl Config {
                             // 32-bit x86 toolset used to be the default for all hosts,
                             // but Visual Studio 2019 changed the default toolset to match the host,
                             // so we need to manually override it for x86 targets
-                            cmd.arg("-Thost=x86");
-                            cmd.arg("-AWin32");
+                            conf_cmd.arg("-Thost=x86");
+                            conf_cmd.arg("-AWin32");
                         }
                         _ => {}
                     };
@@ -485,15 +489,15 @@ impl Config {
             }
         } else if target.contains("redox") {
             if !self.defined("CMAKE_SYSTEM_NAME") {
-                cmd.arg("-DCMAKE_SYSTEM_NAME=Generic");
+                conf_cmd.arg("-DCMAKE_SYSTEM_NAME=Generic");
             }
         } else if target.contains("solaris") {
             if !self.defined("CMAKE_SYSTEM_NAME") {
-                cmd.arg("-DCMAKE_SYSTEM_NAME=SunOS");
+                conf_cmd.arg("-DCMAKE_SYSTEM_NAME=SunOS");
             }
         }
         if let Some(ref generator) = self.generator {
-            cmd.arg("-G").arg(generator);
+            conf_cmd.arg("-G").arg(generator);
         }
         let profile = self.profile.clone().unwrap_or_else(|| {
             // Automatically set the `CMAKE_BUILD_TYPE` if the user did not
@@ -563,13 +567,13 @@ impl Config {
             os.push(k);
             os.push("=");
             os.push(v);
-            cmd.arg(os);
+            conf_cmd.arg(os);
         }
 
         if !self.defined("CMAKE_INSTALL_PREFIX") {
             let mut dstflag = OsString::from("-DCMAKE_INSTALL_PREFIX=");
             dstflag.push(&dst);
-            cmd.arg(dstflag);
+            conf_cmd.arg(dstflag);
         }
 
         let build_type = self
@@ -604,7 +608,7 @@ impl Config {
                         flagsflag.push(" ");
                         flagsflag.push(arg);
                     }
-                    cmd.arg(flagsflag);
+                    conf_cmd.arg(flagsflag);
                 }
 
                 // The visual studio generator apparently doesn't respect
@@ -628,7 +632,7 @@ impl Config {
                             flagsflag.push(" ");
                             flagsflag.push(arg);
                         }
-                        cmd.arg(flagsflag);
+                        conf_cmd.arg(flagsflag);
                     }
                 }
 
@@ -667,7 +671,7 @@ impl Config {
                             .collect::<Vec<_>>();
                         ccompiler = OsString::from_wide(&wchars);
                     }
-                    cmd.arg(ccompiler);
+                    conf_cmd.arg(ccompiler);
                 }
             };
 
@@ -677,25 +681,28 @@ impl Config {
         }
 
         if !self.defined("CMAKE_BUILD_TYPE") {
-            cmd.arg(&format!("-DCMAKE_BUILD_TYPE={}", profile));
+            conf_cmd.arg(&format!("-DCMAKE_BUILD_TYPE={}", profile));
         }
 
         if self.verbose_make {
-            cmd.arg("-DCMAKE_VERBOSE_MAKEFILE:BOOL=ON");
+            conf_cmd.arg("-DCMAKE_VERBOSE_MAKEFILE:BOOL=ON");
         }
 
         if !self.defined("CMAKE_TOOLCHAIN_FILE") {
             if let Ok(s) = env::var("CMAKE_TOOLCHAIN_FILE") {
-                cmd.arg(&format!("-DCMAKE_TOOLCHAIN_FILE={}", s));
+                conf_cmd.arg(&format!("-DCMAKE_TOOLCHAIN_FILE={}", s));
             }
         }
 
         for &(ref k, ref v) in c_compiler.env().iter().chain(&self.env) {
-            cmd.env(k, v);
+            conf_cmd.env(k, v);
         }
 
-        if self.always_configure || !build.join("CMakeCache.txt").exists() {
-            run(cmd.env("CMAKE_PREFIX_PATH", cmake_prefix_path), "cmake");
+        if self.always_configure || !build.join(CMAKE_CACHE_FILE).exists() {
+            run(
+                conf_cmd.env("CMAKE_PREFIX_PATH", cmake_prefix_path),
+                "cmake",
+            );
         } else {
             println!("CMake project was already configured. Skipping configuration step.");
         }
@@ -741,32 +748,33 @@ impl Config {
 
         // And build!
         let target = self.cmake_target.clone().unwrap_or("install".to_string());
-        let mut cmd = Command::new(&executable);
+        let mut build_cmd = Command::new(&executable);
         for &(ref k, ref v) in c_compiler.env().iter().chain(&self.env) {
-            cmd.env(k, v);
+            build_cmd.env(k, v);
         }
 
         if let Some(flags) = makeflags {
-            cmd.env("MAKEFLAGS", flags);
+            build_cmd.env("MAKEFLAGS", flags);
         }
 
-        cmd.arg("--build").arg(".");
+        build_cmd.arg("--build").arg(".");
 
         if !self.no_build_target {
-            cmd.arg("--target").arg(target);
+            build_cmd.arg("--target").arg(target);
         }
 
-        cmd.arg("--config")
+        build_cmd
+            .arg("--config")
             .arg(&profile)
             .arg("--")
             .args(&self.build_args)
             .current_dir(&build);
 
         if let Some(flags) = parallel_flags {
-            cmd.arg(flags);
+            build_cmd.arg(flags);
         }
 
-        run(&mut cmd, "cmake");
+        run(&mut build_cmd, "cmake");
 
         println!("cargo:root={}", dst.display());
         return dst;
@@ -814,7 +822,7 @@ impl Config {
         // isn't relevant to us but we canonicalize it here to ensure
         // we're both checking the same thing.
         let path = fs::canonicalize(&self.path).unwrap_or(self.path.clone());
-        let mut f = match File::open(dir.join("CMakeCache.txt")) {
+        let mut f = match File::open(dir.join(CMAKE_CACHE_FILE)) {
             Ok(f) => f,
             Err(..) => return,
         };
